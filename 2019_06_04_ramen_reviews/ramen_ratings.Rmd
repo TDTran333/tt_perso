@@ -1,0 +1,240 @@
+---
+title: "Ramen Ratings"
+author: "TTD"
+date: "11/12/2020"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+ramen_ratings <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-06-04/ramen_ratings.csv")
+```
+
+```{r}
+View(ramen_ratings) 
+
+ramen_ratings_processed <- ramen_ratings %>% 
+  mutate(style = fct_lump(style, 4),
+         country = fct_lump(country, 12),
+         brand = fct_lump(brand, 20)) %>% 
+  replace_na(list(style = "Other")) %>% 
+  mutate(brand = fct_relevel(brand, "Other"),
+         country = fct_relevel(country, "Other"),
+         style = fct_relevel(style, "Pack"))
+
+ramen_ratings_processed %>% 
+  gather(key = category, value = value, -review_number, -stars) %>% 
+  count(category, value) %>% 
+  group_by(category) %>% 
+  top_n(n = 16, wt = n) %>% 
+  ungroup() %>% 
+  mutate(value = fct_reorder(value, n)) %>% 
+  ggplot(aes(value, n)) +
+  geom_col() +
+  facet_wrap(~ category, scale = "free_y") +
+  coord_flip()
+
+# example with pivot_longer and slice_max
+ramen_ratings %>% 
+  pivot_longer(cols = c(-review_number, -stars) , names_to = "category", values_to = "value") %>% 
+  count(category, value) %>% 
+  group_by(category) %>% 
+  slice_max(order_by = n, n = 16)
+
+# example with Other ordered correctly
+library(drlib)
+
+ramen_ratings_processed %>% 
+  gather(key = category, value = value, -review_number, -stars) %>% 
+  count(category, value) %>% 
+  group_by(category) %>% 
+  top_n(n = 20, wt = n) %>% 
+  ungroup() %>% 
+  mutate(value = reorder_within(value, n, category)) %>% 
+  ggplot(aes(value, n)) +
+  geom_col() +
+  facet_wrap(~ category, scale = "free_y") +
+  scale_x_reordered() +
+  coord_flip() +
+  labs(title = "Categorical predictors (after processing)",
+       x = "Predictor",
+       y = "COunt")
+```
+
+```{r}
+library(broom)
+
+lm(stars ~ brand + country + style, ramen_ratings_processed) %>% 
+  tidy(conf.int = TRUE) %>% 
+  filter(term != "(Intercept)") %>% 
+  arrange(desc(estimate)) %>% 
+  extract(term, c("category", "term"), "^([a-z]+)([A-Z].*)") %>% 
+  mutate(term = fct_reorder(term, estimate)) %>% 
+  ggplot(aes(estimate, term, color = category)) +
+  geom_point() +
+  geom_errorbar((aes(xmin = conf.low, xmax = conf.high))) +
+  geom_vline(lty = 2, xintercept = 0) +
+  facet_wrap(~ category, ncol = 1, scales = "free_y") +
+  theme(legend.position = "none") +
+  labs(x = "Estimated effect on ramen rating",
+       y = "",
+       title = "Coefficients that predict ramen ratings",
+       subtitle = "Less common brands and countries were lumped together as the reference level")
+
+
+```
+
+```{r}
+library(tidytext)
+
+ramen_ratings_processed %>% 
+  unnest_tokens(word, variety) %>% 
+  group_by(word) %>% 
+  summarize(avg_rating = mean(stars, na.rm = TRUE),
+            n = n()) %>% 
+  arrange(desc(n))
+```
+
+```{r}
+library(rvest)
+
+# Example Rvest
+lego_url <- "http://www.imdb.com/title/tt1490017/"
+html <- read_html(lego_url)
+cast <- html_nodes(html, "td:nth-child(2) a")
+
+# Cast names
+length(cast)
+cast[1:2]
+html_text(cast, trim = TRUE)
+
+# Cast attributes
+cast_attrs <- html_attrs(cast)
+length(cast_attrs)
+cast_attrs[1:2]
+
+# Cast relative url
+cast_rel_urls <- html_attr(cast, "href")
+length(cast_rel_urls)
+cast_rel_urls[1:2]
+
+# Cast absolute url
+cast_abs_urls <- html_attr(cast, "href") %>% 
+  url_absolute(lego_url)
+cast_abs_urls[1:2]
+
+ramen_url <- "https://www.theramenrater.com/resources-2/the-list/"
+ramen_list <- read_html(ramen_url)
+
+ramen_reviews <- ramen_list %>% 
+  html_node("#myTable") %>% 
+  html_table() %>% 
+  tibble() %>% 
+  janitor::clean_names() %>% 
+  select(-t)
+
+```
+
+```{r}
+review_links <- read_html(ramen_url) %>% 
+  html_nodes("#myTable a")
+
+reviews <- tibble(review_number = parse_number(html_text(review_links)),
+                  link = html_attr(review_links, "href"))
+
+```
+
+```{r}
+page <- read_html("https://www.theramenrater.com/2019/05/23/3180-yum-yum-moo-deng/")
+
+page %>% 
+  html_nodes(".entry-content > p") %>% 
+  html_text() %>% 
+  str_subset(".")
+  
+get_review_text <- function(url){
+  message(url)
+  
+  read_html(url) %>% 
+  html_nodes(".entry-content > p") %>% 
+  html_text() %>% 
+  str_subset(".")
+}
+
+review_text <- reviews %>% 
+  filter((review_number >= (3180-249)), (review_number <= 3180)) %>% 
+  mutate(text = map(link, possibly(get_review_text, character(0), quiet = FALSE)))
+
+#example of safely() and possibly()
+
+x <- list(1, 10, "a")
+y <- x %>% map(safely(log)) %>% transpose()
+str(y)
+
+x %>% map_dbl(possibly(log, NA))
+
+```
+
+```{r}
+review_paragraphs <- review_text %>%
+  unnest(cols = c(text)) %>% 
+  filter(str_detect(text, "Finished")) %>% 
+  mutate(text = str_remove(text, "Finished.*?\\. "))
+
+review_paragraphs_tokenized <- review_paragraphs %>% 
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words, by = "word") %>% 
+  filter(str_detect(word, "[a-z]")) %>%
+  inner_join(ramen_ratings, by = "review_number")
+
+review_words <- review_paragraphs_tokenized %>%
+  filter(!is.na(stars)) %>% 
+  group_by(word) %>% 
+  summarize(number = n(),
+            reviews = n_distinct(review_number),
+            avg_rating = mean(stars)) %>% 
+  arrange(desc(reviews))
+
+review_words_filtered <- review_words %>% 
+  filter(reviews < 200, reviews >= 10)
+
+library(widyr)
+word_cors <- review_paragraphs_tokenized %>% 
+  semi_join(review_words_filtered, by = "word") %>% 
+  distinct(review_number, word) %>% 
+  pairwise_cor(word, review_number, sort = TRUE)
+
+```
+
+```{r}
+library(igraph)
+library(ggraph)
+
+set.seed(2019)
+
+filtered_cors <- word_cors %>% 
+  head(300)
+
+nodes <- review_words_filtered %>% 
+  filter(word %in% filtered_cors$item1 | word %in% filtered_cors$item2)
+
+filtered_cors %>% 
+  graph_from_data_frame(vertices = nodes) %>% 
+  ggraph(layout = 'fr') +
+  geom_edge_link() +
+  geom_node_point(aes(size = reviews * 1.1)) +
+  geom_node_point(aes(size = reviews, color = avg_rating)) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  scale_color_gradient2(low = "red", high = "blue", midpoint = 4) +
+  theme_void() +
+  labs(color = "Average rating",
+       size = "# of reviews",
+       title = "Network of words used together in ramen reviews",
+       subtitle = "Based on 250 ramen reviews and their star ratings")
+```
+
