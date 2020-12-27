@@ -1,0 +1,81 @@
+---
+title: "Global Crop Yields"
+author: "TTD"
+date: "26/12/2020"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(stringr)
+library(shiny)
+library(plotly)
+
+# Data cleaning and processing
+yields_tidy <- readRDS("yields_tidy.rds")
+
+top_crops <- yields_tidy %>% 
+  count(crop, sort = TRUE) %>% 
+  head(n = 9) %>% 
+  pull(crop)
+```
+
+
+```{r}
+plot_yields <- function(tbl, facet_scales = "fixed") {
+  g <- tbl %>%
+    mutate(crop = fct_reorder(crop, -yield)) %>%
+    mutate(entity = fct_reorder(entity, -yield)) %>%
+    ggplot(aes(year, yield, color = entity)) +
+    geom_line() +
+    expand_limits(y = 0) +
+    facet_wrap(~ crop, scales = facet_scales) +
+    labs(x = "Year",
+         y = "Yield (tonnes per hectare)",
+         title = "Crop yields over time",
+         colorr = "Country")
+  
+  ggplotly(g)
+}
+
+# yields_tidy %>%
+#   filter(code %in% c("USA", "IND")) %>%
+#   plot_yields()
+```
+
+```{r eruptions, echo=FALSE}
+inputPanel(
+  selectizeInput("entity",
+                 label = "Country/Continent/Region:",
+                 choices = unique(yields_tidy$entity),
+                 selected = c("United States", "Canada", "Mexico"),
+                 multiple = TRUE),
+  
+  selectizeInput("crop",
+                 label = "Crop:",
+                 choices = unique(yields_tidy$crop),
+                 selected = top_crops,
+                 multiple = TRUE),
+  
+  radioButtons("facet_scales",
+               label = "",
+               choices = c("Free y-axis" = "free_y",
+                           "Shared y-axis" = "fixed"))
+)
+
+renderPlotly({
+  yields_tidy %>%
+    filter(entity %in% input$entity,
+           crop %in% input$crop) %>%
+    plot_yields(input$facet_scales)
+})
+```
+
+

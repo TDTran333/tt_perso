@@ -236,5 +236,7 @@ filtered_cors %>%
        size = "# of reviews",
        title = "Network of words used together in ramen reviews",
        subtitle = "Based on 250 ramen reviews and their star ratings")
+
+ggsave("Correlation_graph.png")
 ```
 
