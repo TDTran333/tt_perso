@@ -1,0 +1,172 @@
+---
+title: "TidyTemplate"
+date: 2021-01-13
+output: html_output
+---
+
+# TidyTuesday
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(glue)
+```
+
+```{r Load}
+tt <- tt_load("2020-09-08")
+```
+
+```{r Glimpse}
+tt %>% 
+  map(glimpse)
+
+episodes <- tt$friends_info %>%
+  mutate(full_title = glue("{ season }.{ episode } { title }"),
+         full_title = fct_reorder(full_title, season + .001 * episode))
+
+friends <- tt$friends %>% 
+  inner_join(episodes, by = c("season", "episode"))
+
+friends_emotions <- tt$friends_emotions
+
+main_cast <- friends %>% 
+  count(speaker, sort = TRUE) %>% 
+  head(6)
+
+```
+
+```{r}
+episodes %>% 
+  ggplot(aes(as.integer(full_title), us_views_millions)) + 
+  geom_point(aes(color = factor(season))) +
+  geom_line() +
+  geom_text(aes(label = title), vjust = 1, hjust = 1, check_overlap = TRUE, size = 2) +
+  theme(axis.text.x = element_blank()) +
+  expand_limits(y = 0) +
+  labs( x = "Episode number",
+        color = "Season")
+  
+episodes %>% 
+  ggplot(aes(as.integer(full_title), imdb_rating)) + 
+  geom_point(aes(color = factor(season))) +
+  geom_line() +
+  geom_text(aes(label = title), vjust = 1, hjust = 1, check_overlap = TRUE, size = 2) +
+    expand_limits(y = 0) +
+  labs( x = "Episode number",
+        y = "IMDB rating",
+        color = "Season")
+```
+
+
+```{r}
+speaker_lines_per_episode <- friends %>% 
+  count(speaker, title, imdb_rating, season) %>%
+  complete(speaker, title, fill = list(n = 0)) %>% 
+  group_by(title) %>% 
+  fill(imdb_rating, season, .direction = "downup") %>% 
+  ungroup() %>%
+  add_count(title, wt = n, name = "episode_total") %>% 
+  mutate(pct =  n / episode_total)
+  
+speaker_lines_per_episode %>% 
+  semi_join(main_cast, by = "speaker") %>% 
+  mutate(speaker = fct_reorder(speaker, pct)) %>% 
+  ggplot(aes(pct, speaker)) +
+  geom_boxplot() +
+  scale_x_log10()
+
+speaker_lines_per_episode %>% 
+  semi_join(main_cast, by = "speaker") %>% 
+  group_by(speaker) %>% 
+  summarize(correlation = cor(log2(pct), imdb_rating))
+
+friends %>% 
+  count(season, episode, title) %>%
+  inner_join(distinct(episodes, season, episode, imdb_rating)) %>%
+  filter(n <= 500) %>% 
+  ggplot(aes(n, imdb_rating)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+```
+
+```{r}
+speakers_per_episode_wide <- speaker_lines_per_episode %>% 
+  semi_join(main_cast, by = "speaker") %>% 
+  select(-n) %>% 
+  pivot_wider(names_from = speaker, values_from = pct) %>% 
+  select(-title)
+
+speakers_per_episode_wide %>% 
+  mutate_at(vars(-imdb_rating), log2)
+
+speakers_per_episode_wide %>%
+  select(-season) %>% 
+  mutate(across(.cols = -c(imdb_rating), log2)) %>% 
+  lm(imdb_rating ~ ., data = .) %>%
+  # aov() %>% 
+  summary()
+```
+
+```{r}
+library(tidytext)
+
+words_unnested <- friends %>% 
+  select(text, speaker, season, episode, full_title) %>% 
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words, by = "word") %>%
+  filter(!word %in% c("yeah", "hey", "gonna", "uh"))
+
+library(tidylo)
+
+by_speaker_word <- words_unnested %>%
+  semi_join(main_cast, by = "speaker") %>% 
+  count(speaker, word) %>% 
+  add_count(word, wt = n, name = "word_total") %>%
+  filter(word_total >= 50)
+
+by_speaker_word %>% 
+  bind_log_odds(speaker, word, n) %>%
+  group_by(speaker) %>% 
+  slice_max(n = 16, log_odds_weighted) %>%
+  ungroup() %>% 
+  mutate(word = reorder_within(word, log_odds_weighted, speaker)) %>% 
+  ggplot(aes(log_odds_weighted, word)) +
+  geom_col() +
+  scale_y_reordered() +
+  facet_wrap(~ speaker, scales = "free") +
+  labs(x = "Log odds (this character / (other chaarcters)")
+  
+```
+
+```{r}
+library(widyr)
+
+friends %>% 
+  unite(scene_id, season, episode, scene, remove = FALSE) %>% 
+  count(speaker, scene_id) %>% 
+  semi_join(main_cast, by = "speaker") %>% 
+  pairwise_cor(speaker, scene_id, n, sort = TRUE) %>% 
+  mutate(item2 = reorder_within(item2, correlation, item1)) %>% 
+  ggplot(aes(correlation, item2)) +
+  geom_col(aes(fill = item1), show.legend = FALSE) +
+  scale_y_reordered() +
+  facet_wrap(~ item1, scales = "free_y") +
+  labs(x = "Correlation between characters appearing in the same scene")
+  
+```
+
+```{r}
+friends %>% 
+  unite(scene_id, season, episode, scene, remove = FALSE) %>% 
+  add_count(speaker, name = "speaker_total") %>% 
+  filter(speaker_total >= 50) %>% 
+  count(speaker, scene_id) %>% 
+  pairwise_cor(speaker, scene_id, n, sort = TRUE) %>% 
+  filter(item1 == "Ross Geller")
+```
+
