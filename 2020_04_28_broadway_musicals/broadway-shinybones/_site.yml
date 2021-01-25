@@ -1,0 +1,17 @@
+name: Main Dashboard
+sidebar:
+  - text: Revenue
+    icon: dollar-sign
+    module:
+      metric_panel:
+        metric: !expr DATA$broadway_revenue_usd_gross
+  - text: Ticket Price
+    icon: ticket-alt
+    module:
+      metric_panel:
+        metric: !expr DATA$broadway_revenue_avg_ticket_price
+  - text: Capacity
+    icon: users
+    module:
+      metric_panel:
+        metric: !expr DATA$broadway_revenue_pct_capacity
